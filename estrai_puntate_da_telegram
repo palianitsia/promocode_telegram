@@ -1,0 +1,75 @@
+import asyncio
+import aiohttp
+from bs4 import BeautifulSoup
+import re
+
+async def fetch_promocodes_with_payloads(session):
+    base_url = 'https://t.me/s/puntateaste'
+    promocodes = set()
+    max_pages = 5  # Numero massimo di pagine da cui estrarre promocode
+    current_page = 0
+
+    try:
+        async with session.get(base_url) as response:
+            if response.status != 200:
+                print(f"Errore durante il recupero della pagina principale: {response.status}")
+                return list(promocodes)
+            page_content = await response.text()
+            soup = BeautifulSoup(page_content, 'lxml')
+            payloads = []
+            for link_tag in soup.head.find_all('link', href=True)[:1]:
+                href = link_tag['href']
+                match = re.search(r'before=(\d+)', href)
+                if match:
+                    payloads.append(match.group(1))
+            if not payloads:
+                print("Nessun payload trovato nella pagina principale.")
+                return list(promocodes)
+        while current_page < max_pages:
+            current_page += 1
+            payload = payloads[-1]
+            url = f"{base_url}?before={payload}"
+            async with session.get(url) as response:
+                if response.status == 200:
+                    content = await response.text()
+                    soup = BeautifulSoup(content, 'lxml')
+                    for link_tag in soup.find_all('a', href=True):
+                        href = link_tag['href']
+                        if 'bidoo.com/' in href and 'promocode=' in href:
+                            promocode = extract_promocode(href)
+                            if promocode:
+                                promocodes.add(promocode)
+                    new_payload_match = None
+                    for link_tag in soup.head.find_all('link', href=True)[:1]:
+                        href = link_tag['href']
+                        new_payload_match = re.search(r'before=(\d+)', href)
+                        if new_payload_match:
+                            break
+                    if new_payload_match:
+                        new_payload = new_payload_match.group(1)
+                        payloads.append(new_payload)
+                    else:
+                        print("Nessun nuovo payload trovato. Interrompo l'iterazione.")
+                        break
+    except Exception as e:
+        print(f"Errore durante il recupero dei codici promozionali: {str(e)}")
+    return list(promocodes)
+    
+def extract_promocode(link):
+    if 'promocode=' in link:
+        start = link.find('promocode=') + len('promocode=')
+        end = link.find('&', start)
+        return link[start:end] if end != -1 else link[start:]
+    return None
+
+async def main():
+    async with aiohttp.ClientSession() as session:
+        promocodes = await fetch_promocodes_with_payloads(session)
+        print("Codici promozionali estratti:")
+        for code in promocodes:
+            print(code)
+
+    input("Premi Invio per chiudere il terminale...")
+
+if __name__ == "__main__":
+    asyncio.run(main())
